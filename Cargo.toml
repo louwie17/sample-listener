@@ -1,0 +1,18 @@
+[package]
+
+name = "sample_listener"
+version = "0.0.1"
+authors = [ "lourensschep@gmail.com" ]
+build = "build.rs"
+
+[dependencies]
+chrono = { version = "0.4", features = ["serde"] }
+rusqlite = "0.13.0"
+dotenv = "0.10"
+uuid = { version = "0.6", features = ["v4"] }
+libc = "0.2"
+
+[build-dependencies]
+cc = "1.0"
+glob = "0.2.11"
+
