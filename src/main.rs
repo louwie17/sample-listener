@@ -14,6 +14,7 @@ use std::path::Path;
 use uuid::Uuid;
 use std::time::Duration;
 use std::thread;
+use std::boxed::{Box}
 
 const FREQUENCY: i32 = 91; 
 const NODEID: i32 = 4;
@@ -21,12 +22,21 @@ const TONODEID: i32 = 2;
 const NETWORKID: i32 = 0;
 const TXPOWER: u8 = 31;
 
+#[repr(C)]
+struct Payload {
+    uptime: u64,
+    humidity: f64,
+    temperature: f64,
+    moisture: i32,
+}
+
 #[link(name = "rfm69", kind = "static")]
 extern {
     fn wiringPiSetup();
     fn rfm69_receive();
     fn rfm69_getDataLen() -> c_char;
     fn rfm69_getData(data: *const c_char);
+    fn rfm69_getDataPointer(payload: *mut Payload);
     fn rfm69_initialize(freq: i32, node_id:i32, network_id:i32, interrupt_pin: i32);
     fn rfm69_encrypt(password: &CStr);
     fn rfm69_setPowerLevel(power: c_char); // Max Power
@@ -41,6 +51,7 @@ struct Sample {
     humidity: f64,
     temperature: f64
 }
+
 
 
 fn main() {
@@ -64,6 +75,7 @@ fn main() {
         rfm69_encrypt(CRYPTPASS.as_c_str());
         rfm69_setPowerLevel(TXPOWER); // Max Power
         rfm69_setPromiscuous(1);
+        rfm69_getDataPointer();
     }
 
     let me = Sample {
@@ -86,20 +98,25 @@ fn main() {
       }
       if datalen > 0 {
         let split_str = get_sample_data();
+        let moisture = split_str[5].parse::<f64>();
+        let humidity = split_str[1].trim_matches('%').parse::<f64>();
+        let temperature = split_str[3].parse::<f64>();
 
-        let me = Sample {
-          uuid: Uuid::new_v4(),
-          date_time: Utc::now(),
-          moisture: split_str[5].parse::<f64>().unwrap(),
-          humidity: split_str[1].trim_matches('%').parse::<f64>().unwrap(),
-          temperature: split_str[3].parse::<f64>().unwrap()
-        };
+        if moisture.is_ok() && humidity.is_ok() && temperature.is_ok() {
+            let me = Sample {
+                uuid: Uuid::new_v4(),
+                date_time: Utc::now(),
+                moisture: moisture.unwrap(),
+                humidity: humidity.unwrap(),
+                temperature: temperature.unwrap()
+            };
 
-        let slice = &me.uuid.as_bytes().to_vec();
-        println!("{:?}", me);
-        conn.execute("INSERT INTO samples (uuid, DateTime, Moisture, Humidity, Temperature)
+            let slice = &me.uuid.as_bytes().to_vec();
+            println!("{:?}", me);
+            conn.execute("INSERT INTO samples (uuid, DateTime, Moisture, Humidity, Temperature)
                   VALUES (?1, ?2, ?3, ?4, ?5)",
-                 &[slice, &me.date_time.to_string(), &me.moisture, &me.humidity, &me.temperature]).unwrap();
+                  &[slice, &me.date_time.to_string(), &me.moisture, &me.humidity, &me.temperature]).unwrap();
+        }
 
         thread::sleep(Duration::from_secs(300)); // sleep 5min
       }
@@ -108,7 +125,11 @@ fn main() {
 
 fn get_sample_data() -> Vec<&'static str> {
   unsafe {
-  let received_vec = vec![0; 86];
+      let mut payload = Box::new(Payload {uptime: 0, humidity: 0.0, temperature: 0.0, moisture: 0});
+      rfm69_getDataPointer(&mut *payload);
+      println!("uptime: {:?}", payload.uptime);
+      println!("humidity: {:?}", payload.humidity);
+      let received_vec = vec![0; 86];
       let c_string = CString::from_vec_unchecked(received_vec);
       rfm69_getData(c_string.as_ptr());
       let slice = CStr::from_ptr(c_string.as_ptr());
